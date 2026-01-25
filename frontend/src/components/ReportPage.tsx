@@ -30,7 +30,7 @@ const ReportPage: React.FC = () => {
     }
   };
 
-  if (!initialized) {
+  if (!initialized && !keycloak.authenticated) {
     return <div>Loading...</div>;
   }
 
