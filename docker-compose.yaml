@@ -223,7 +223,7 @@ services:
           --lastname User \
           --role Admin \
           --email admin@example.com &&
-        echo "✅ Инициализация завершена. Логин: admin / Пароль: admin" &&
+        echo "Инициализация завершена. Логин: admin / Пароль: admin" &&
         exit 0
     restart: "no"
 

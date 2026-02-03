@@ -4,10 +4,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from typing import Optional
 
-# Конфигурация Keycloak
-KEYCLOAK_URL = "http://keycloak:8080"  # Внутренний URL в Docker
+KEYCLOAK_URL = "http://keycloak:8080"
 REALM = "reports-realm"
-CLIENT_ID = "reports-backend"  # Должен быть confidential клиент в Keycloak
+CLIENT_ID = "reports-backend"
 ALGORITHMS = ["RS256"]
 
 class KeycloakJWTBearer(HTTPBearer):
@@ -25,11 +24,8 @@ class KeycloakJWTBearer(HTTPBearer):
 
     def verify_jwt(self, token: str) -> dict:
         try:
-            # Получаем публичный ключ от Keycloak
             jwks_url = f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/certs"
             jwks = requests.get(jwks_url).json()
-
-            # Извлекаем header токена
             unverified_header = jwt.get_unverified_header(token)
             rsa_key = {}
 
@@ -60,15 +56,9 @@ class KeycloakJWTBearer(HTTPBearer):
             raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
 
 def require_prothetic_role(token_payload: dict = Depends(KeycloakJWTBearer())):
-    """Проверяет наличие роли prothetic_user"""
-    # Роли могут быть в разных местах в зависимости от маппинга
     roles = []
-
-    # Проверяем realm roles
     if "realm_access" in token_payload and "roles" in token_payload["realm_access"]:
         roles.extend(token_payload["realm_access"]["roles"])
-
-    # Проверяем client roles
     if "resource_access" in token_payload and CLIENT_ID in token_payload["resource_access"]:
         if "roles" in token_payload["resource_access"][CLIENT_ID]:
             roles.extend(token_payload["resource_access"][CLIENT_ID]["roles"])

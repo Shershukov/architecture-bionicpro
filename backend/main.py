@@ -25,7 +25,6 @@ CRM_DB_CONFIG = {
 }
 
 def get_user_id_by_email(email: str) -> int:
-    """Получает user_id из CRM по keycloak_sub"""
     try:
         conn = psycopg2.connect(**CRM_DB_CONFIG)
         cursor = conn.cursor()
@@ -74,8 +73,6 @@ async def get_user_report(
         print(f"{user_email}")
         target_user_id = get_user_id_by_email(user_email)
         print(f"{target_user_id}")
-
-        # 🔒 Проверка безопасности: пользователь может запрашивать ТОЛЬКО свой отчёт
         if user_id is not None and user_id != target_user_id:
             raise HTTPException(
                 status_code=403,

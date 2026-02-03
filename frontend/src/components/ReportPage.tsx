@@ -5,7 +5,7 @@ const ReportPage: React.FC = () => {
   const { keycloak, initialized } = useKeycloak();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reportData, setReportData] = useState<any[]>([]); // ← Новое состояние для данных
+  const [reportData, setReportData] = useState<any[]>([]);
 
   const downloadReport = async () => {
     if (!keycloak?.token) {
@@ -22,17 +22,13 @@ const ReportPage: React.FC = () => {
           'Authorization': `Bearer ${keycloak.token}`
         }
       });
-
-      // 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обработка ответа
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
-      setReportData(data); // ← Сохраняем данные
-
-      // Опционально: скачиваем как CSV/JSON
+      setReportData(data);
       downloadAsFile(data);
 
     } catch (err) {
@@ -92,8 +88,6 @@ const ReportPage: React.FC = () => {
                 {error}
               </div>
           )}
-
-          {/* Опционально: отображение данных в таблице */}
           {reportData.length > 0 && (
               <div className="mt-6 overflow-x-auto">
                 <table className="min-w-full bg-white border">
