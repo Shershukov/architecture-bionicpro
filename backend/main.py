@@ -18,7 +18,7 @@ app.add_middleware(
 
 CRM_DB_CONFIG = {
     'host': 'crm_db',
-    'port': 5432,
+    'port': 542,
     'database': 'crm_db',
     'user': 'crm_user',
     'password': 'crm_password'
@@ -37,10 +37,12 @@ def get_user_id_by_email(email: str) -> int:
         conn.close()
 
         if not result:
+            print(f"User {email} not found in CRM")
             raise HTTPException(status_code=404, detail="User not found in CRM")
         return result[0]
 
     except Exception as e:
+        print(f"CRM DB error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"CRM DB error: {str(e)}")
 
 client = clickhouse_connect.get_client(
@@ -70,10 +72,9 @@ async def get_user_report(
 ):
     try:
         user_email = token_payload.get("email")
-        print(f"{user_email}")
         target_user_id = get_user_id_by_email(user_email)
-        print(f"{target_user_id}")
         if user_id is not None and user_id != target_user_id:
+            print(f"Access forbidden for {user_email}")
             raise HTTPException(
                 status_code=403,
                 detail="Доступ запрещен"
@@ -99,6 +100,7 @@ async def get_user_report(
         result = client.query(query)
 
         if not result.result_rows:
+            print(f"Report for user {target_user_id} not found")
             raise HTTPException(
                 status_code=404,
                 detail=f"Report for user {target_user_id} not found"
@@ -122,4 +124,5 @@ async def get_user_report(
         return reports
 
     except Exception as e:
+        print(f"Database error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
