@@ -123,7 +123,10 @@
         "enabled": true,
         "clientAuthenticatorType": "client-secret",
         "secret": "oNwoLQdvJAvRcL89SydqCWCe5ry1jMgq", 
-        "bearerOnly": true
+        "bearerOnly": true,
+        "attributes": {
+          "pkce.code.challenge.method": "S256"
+        }
       }
     ]
   }

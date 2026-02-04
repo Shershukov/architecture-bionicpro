@@ -1,5 +1,16 @@
 version: '3.8'
 
+x-airflow-common-env: &airflow-common-env
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__FERNET_KEY: "d6Vefz3G9U_ynXB3cr7y_Ak35tBEuWcZq7pX9a8X7yg="
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW_CONN_CRM_DB: "postgresql://crm_user:crm_password@crm_db:5432/crm_db"
+  AIRFLOW_CONN_TELEMETRICS_DB: "postgresql://tm_user:tm_password@telemetrics_db:5432/tm_db"
+  AIRFLOW_CONN_MINIO_S3: "aws://minioadmin:minioadmin123@/?__extra__=%7B%22endpoint_url%22%3A+%22http%3A%2F%2Fminio%3A9000%22%2C+%22region_name%22%3A+%22us-east-1%22%2C+%22verify%22%3A+false%7D"
+  AIRFLOW_CONN_CLICKHOUSE_DEFAULT: "clickhouse://clickhouse_user:clickhouse_secure_789@clickhouse:8123/prosthetics_analytics"
+  _PIP_ADDITIONAL_REQUIREMENTS: "clickhouse-connect apache-airflow-providers-amazon apache-airflow-providers-postgres"
+
 services:
   keycloak_db:
     image: postgres:14
@@ -11,6 +22,38 @@ services:
       - ./postgres-keycloak-data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
+  crm_db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: crm_db
+      POSTGRES_USER: crm_user
+      POSTGRES_PASSWORD: crm_password
+    volumes:
+      - ./postgres-crm-data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  telemetrics_db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: tm_db
+      POSTGRES_USER: tm_user
+      POSTGRES_PASSWORD: tm_password
+    volumes:
+      - ./postgres-tm-data:/var/lib/postgresql/data
+      - ./init-telemetry:/docker-entrypoint-initdb.d
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tm_user -d tm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   keycloak:
     image: quay.io/keycloak/keycloak:21.1
     environment:
@@ -40,3 +83,165 @@ services:
       REACT_APP_KEYCLOAK_URL: http://localhost:8080
       REACT_APP_KEYCLOAK_REALM: reports-realm
       REACT_APP_KEYCLOAK_CLIENT_ID: reports-frontend
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_DEFAULT_BUCKETS: "landing-zone:public,curated-zone:public"
+    volumes:
+      - ./minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+  minio-mc:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: minio-mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        /usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin123 &&
+        /usr/bin/mc mb minio/landing-zone --ignore-existing &&
+        /usr/bin/mc mb minio/curated-zone --ignore-existing &&
+        /usr/bin/mc anonymous set public minio/landing-zone &&
+        /usr/bin/mc anonymous set public minio/curated-zone &&
+        echo 'Бакеты созданы: landing-zone, curated-zone' &&
+        tail -f /dev/null
+      "
+    restart: on-failure
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9002:9002"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./init-clickhouse:/docker-entrypoint-initdb.d
+    environment:
+      CLICKHOUSE_USER: clickhouse_user
+      CLICKHOUSE_PASSWORD: clickhouse_secure_789
+      CLICKHOUSE_DEFAULT_DATABASE: prosthetics_analytics
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-webserver
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__CORE__FERNET_KEY: "d6Vefz3G9U_ynXB3cr7y_Ak35tBEuWcZq7pX9a8X7yg="
+      AIRFLOW__WEBSERVER__SECRET_KEY: "temporary_secret_key"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      crm_db:
+        condition: service_healthy
+      telemetrics_db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    command: [ "airflow", "webserver" ]
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-scheduler
+    environment:
+      <<: *airflow-common-env
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+    depends_on:
+      airflow-webserver:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["airflow", "scheduler"]
+
+  airflow-init:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: airflow-init
+    environment:
+      <<: *airflow-common-env
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      crm_db:
+        condition: service_healthy
+      telemetrics_db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    command:
+      - bash
+      - -c
+      - |
+        echo "⏳ Инициализация метаданных Airflow..." &&
+        airflow db init &&
+        echo "👤 Создание пользователя admin..." &&
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com &&
+        echo "Инициализация завершена. Логин: admin / Пароль: admin" &&
+        exit 0
+    restart: "no"
+
+  airflow-postgres:
+    image: postgres:15-alpine
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - ./airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
